@@ -8,7 +8,7 @@ from typing import Any, ClassVar, Generic, Self, TypeVar
 
 import cloakbrowser
 
-from storage import JsonFileDatabase
+from storage import DuckDBDatabase
 
 
 PromptFn = Callable[[str], None | Awaitable[None]]
@@ -31,9 +31,9 @@ StoreT = TypeVar("StoreT")
 
 
 class BrowserCrawler(Generic[ConfigT, StoreT], ABC):
-    """Shared cloakbrowser + JsonFileDatabase lifecycle for platform crawlers."""
+    """Shared cloakbrowser + DuckDB lifecycle for platform crawlers."""
 
-    db_cls: ClassVar[type[Any]] = JsonFileDatabase
+    db_cls: ClassVar[type[Any]] = DuckDBDatabase
     store_cls: ClassVar[type[Any]]
 
     def __init__(

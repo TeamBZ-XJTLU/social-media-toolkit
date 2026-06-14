@@ -13,9 +13,8 @@ import typer
 from crawler.douyin import DouyinCrawler, DouyinCrawlerConfig
 from crawler.rednote import RednoteCrawler, RednoteCrawlerConfig
 from crawler.weibo import WeiboCrawler, WeiboCrawlerConfig
-from crawler.weibo.storage import AUTHOR_COLLECTION, COMMENT_COLLECTION, POST_RAW_COLLECTION
 from dashboard import create_app
-from storage import DuckDBDatabase, JsonCollectionDirectoryDatabase, JsonValue
+from storage import DuckDBDatabase, JsonValue
 
 
 @dataclass(slots=True)
@@ -354,9 +353,9 @@ def run_dashboard(
         typer.Option("--debug", help="Run Flask in debug mode."),
     ] = False,
 ) -> None:
-    """Run the local Weibo DuckDB dashboard."""
+    """Run the local DuckDB dashboard."""
     state = cli_state(ctx)
-    flask_app = create_app(db_path=platform_db_path(state, "weibo"))
+    flask_app = create_app(db_path=state.db)
     flask_app.run(host=host, port=port, debug=debug)
 
 
@@ -617,61 +616,6 @@ def weibo_keyword(
             )
 
     run_async(run())
-
-
-@weibo_app.command("split-db")
-def weibo_split_db(
-    ctx: typer.Context,
-) -> None:
-    """Write legacy weibo.json collections into split collection files."""
-    state = cli_state(ctx)
-    db = JsonCollectionDirectoryDatabase(state.db or Path("data/weibo.json"))
-    counts = {
-        "weibo_authors": len(db.list("weibo_authors")),
-        "weibo_posts_raw": len(db.list("weibo_posts_raw")),
-        "weibo_comments": len(db.list("weibo_comments")),
-    }
-    for collection in counts:
-        records = db.list(collection)
-        db.clear(collection)
-        for record in records:
-            db.create(collection, record, str(record["id"]))
-    typer.echo(
-        "Wrote split Weibo collections: "
-        + ", ".join(f"{collection}={count}" for collection, count in counts.items())
-    )
-
-
-@weibo_app.command("import-json")
-def weibo_import_json(
-    ctx: typer.Context,
-    source: Annotated[
-        Path,
-        typer.Option(help="Legacy Weibo JSON path or split-collection directory."),
-    ] = Path("data/weibo.json"),
-) -> None:
-    """Import legacy Weibo JSON collections into DuckDB."""
-    state = cli_state(ctx)
-    source_db = JsonCollectionDirectoryDatabase(source)
-    target_db = DuckDBDatabase(platform_db_path(state, "weibo"))
-    collections = [AUTHOR_COLLECTION, POST_RAW_COLLECTION, COMMENT_COLLECTION]
-    counts: dict[str, int] = {}
-
-    for collection in collections:
-        records = source_db.list(collection)
-        counts[collection] = len(records)
-        for record in records:
-            record_id = str(record["id"])
-            existing = target_db.read(collection, record_id)
-            if existing is None:
-                target_db.create(collection, record, record_id)
-            else:
-                target_db.replace(collection, record_id, record)
-
-    typer.echo(
-        "Imported Weibo JSON into DuckDB: "
-        + ", ".join(f"{collection}={count}" for collection, count in counts.items())
-    )
 
 
 @douyin_app.command("author")

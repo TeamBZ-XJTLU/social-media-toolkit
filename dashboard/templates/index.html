@@ -1,51 +1,120 @@
 {% extends "base.html" %}
 
-{% block title %}Weibo Dashboard{% endblock %}
+{% block title %}Social Media Dashboard{% endblock %}
+
+{% macro bar_chart(rows, label_key='label', value_key='value') %}
+  <div class="bars">
+    {% for row in rows %}
+      <div class="bar-row">
+        <div class="bar-label">
+          <span>{{ row[label_key] }}</span>
+          <strong>{{ row[value_key]|number }}</strong>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width: {{ row.pct }}%"></div></div>
+      </div>
+    {% else %}
+      <div class="empty-inline">No data</div>
+    {% endfor %}
+  </div>
+{% endmacro %}
+
+{% macro status_chart(rows, value_key) %}
+  {% set max_value = rows|map(attribute=value_key)|max if rows else 0 %}
+  <div class="bars">
+    {% for row in rows %}
+      {% set pct = (row[value_key] / max_value * 100) if max_value else 0 %}
+      <div class="bar-row">
+        <div class="bar-label">
+          <span>{{ row.label }}</span>
+          <strong>{{ row[value_key]|number }}</strong>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width: {{ pct }}%"></div></div>
+      </div>
+    {% else %}
+      <div class="empty-inline">No status rows</div>
+    {% endfor %}
+  </div>
+{% endmacro %}
 
 {% block content %}
   <section class="page-head">
     <div>
-      <h1>Weibo Database Overview</h1>
-      <p>Backend: {{ stats.backend }}. Counts and stats are read directly from the crawler database.</p>
+      <h1>Social Media Database Overview</h1>
+      <p>DuckDB dashboard for Weibo, Rednote, and Douyin crawler data.</p>
     </div>
   </section>
 
   <section class="metric-grid">
-    <a class="metric" href="{{ url_for('browse_collection', collection='weibo_authors') }}">
-      <span class="metric-label">Authors</span>
-      <strong>{{ stats.count_map.get('weibo_authors', 0)|number }}</strong>
-    </a>
-    <a class="metric" href="{{ url_for('browse_collection', collection='weibo_posts_raw') }}">
-      <span class="metric-label">Posts</span>
-      <strong>{{ stats.count_map.get('weibo_posts_raw', 0)|number }}</strong>
-    </a>
-    <a class="metric" href="{{ url_for('browse_collection', collection='weibo_comments') }}">
-      <span class="metric-label">Comments</span>
-      <strong>{{ stats.count_map.get('weibo_comments', 0)|number }}</strong>
-    </a>
     <div class="metric">
-      <span class="metric-label">Authors With Posts</span>
-      <strong>{{ stats.post_coverage.get('authors_with_posts')|number }}</strong>
+      <span class="metric-label">Platforms Ready</span>
+      <strong>{{ stats.totals.platforms_ready|number }}</strong>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Authors</span>
+      <strong>{{ stats.totals.authors|number }}</strong>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Posts / Videos / Notes</span>
+      <strong>{{ stats.totals.content|number }}</strong>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Comments</span>
+      <strong>{{ stats.totals.comments|number }}</strong>
+    </div>
+  </section>
+
+  <section class="platform-grid">
+    {% for row in stats.platforms %}
+      <article class="panel platform-card">
+        <div class="panel-head">
+          <h2>{{ row.label }}</h2>
+          <span class="status-pill {{ 'ok' if row.ready else 'muted' }}">{{ "ready" if row.ready else "missing" }}</span>
+        </div>
+        <div class="platform-body">
+          <dl>
+            <div><dt>Authors</dt><dd>{{ row.authors|number }}</dd></div>
+            <div><dt>Content</dt><dd>{{ row.content|number }}</dd></div>
+            <div><dt>Comments</dt><dd>{{ row.comments|number }}</dd></div>
+            <div><dt>Rows</dt><dd>{{ row.total_rows|number }}</dd></div>
+          </dl>
+          <p class="path">{{ row.db_path }}</p>
+        </div>
+      </article>
+    {% endfor %}
+  </section>
+
+  <section class="three-col">
+    <div class="panel">
+      <div class="panel-head"><h2>Records By Platform</h2></div>
+      {{ bar_chart(stats.charts.platform_records) }}
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Content By Platform</h2></div>
+      {{ bar_chart(stats.charts.content_mix) }}
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Comments By Platform</h2></div>
+      {{ bar_chart(stats.charts.comment_mix) }}
     </div>
   </section>
 
   <section class="two-col">
     <div class="panel">
-      <div class="panel-head">
-        <h2>Collections</h2>
-      </div>
+      <div class="panel-head"><h2>Collections</h2></div>
       <table>
         <thead>
           <tr>
+            <th>Platform</th>
             <th>Collection</th>
             <th class="num">Rows</th>
             <th>Last Updated</th>
           </tr>
         </thead>
         <tbody>
-          {% for row in stats.counts %}
+          {% for row in stats.collections %}
             <tr>
-              <td><a href="{{ url_for('browse_collection', collection=row.collection) }}">{{ collections.get(row.collection, row.collection) }}</a></td>
+              <td>{{ row.platform_label }}</td>
+              <td><a href="{{ url_for('browse_collection', platform=row.platform, collection=row.collection) }}">{{ row.label }}</a></td>
               <td class="num">{{ row.rows|number }}</td>
               <td>{{ row.last_updated_at or "-" }}</td>
             </tr>
@@ -53,120 +122,102 @@
         </tbody>
       </table>
     </div>
-
     <div class="panel">
-      <div class="panel-head">
-        <h2>Post Status</h2>
+      <div class="panel-head"><h2>Tasks By Type</h2></div>
+      {{ bar_chart(stats.charts.task_types) }}
+      <table class="compact-table">
+        <thead><tr><th>Platform</th><th>Type</th><th class="num">Tasks</th></tr></thead>
+        <tbody>
+          {% for row in stats.tasks %}
+            <tr>
+              <td>{{ platforms.get(row.platform).label if platforms.get(row.platform) else row.platform }}</td>
+              <td>{{ row.scrape_type }}</td>
+              <td class="num">{{ row.tasks|number }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3">No task records yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% for platform_key, detail in stats.platform_details.items() %}
+    {% set platform_config = platforms[platform_key] %}
+    <section class="platform-section">
+      <div class="section-head">
+        <h2>{{ platform_config.label }} Details</h2>
       </div>
-      <div class="bars">
-        {% set total_posts = stats.post_coverage.get('posts') or 0 %}
-        {% for row in stats.post_status %}
-          {% set pct = (row.posts / total_posts * 100) if total_posts else 0 %}
-          <div class="bar-row">
-            <div class="bar-label">
-              <span>{{ row.status }}</span>
-              <strong>{{ row.posts|number }}</strong>
-            </div>
-            <div class="bar-track"><div class="bar-fill" style="width: {{ pct }}%"></div></div>
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-head"><h2>Status</h2></div>
+          {{ status_chart(detail.status, 'posts' if platform_key != 'douyin' else 'videos') }}
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Top Authors</h2></div>
+          <table>
+            <thead><tr><th>Author ID</th><th class="num">Records</th></tr></thead>
+            <tbody>
+              {% for row in detail.top_authors %}
+                <tr>
+                  <td>{{ row.author_id }}</td>
+                  <td class="num">{{ row.records|number }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="2">No author breakdown yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>{{ "Top Notes" if platform_key == "rednote" else ("Top Videos" if platform_key == "douyin" else "Most Commented Posts") }}</h2>
           </div>
-        {% endfor %}
+          <table>
+            <thead><tr><th>Content</th><th class="num">{{ "Likes" if platform_key == "rednote" else ("Plays" if platform_key == "douyin" else "Comments") }}</th></tr></thead>
+            <tbody>
+              {% for row in detail.top_content %}
+                <tr>
+                  <td>{{ row.title or row.content_id }}</td>
+                  <td class="num">{{ row.value|number }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="2">No content ranking yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Numeric Stats</h2></div>
+          <table>
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th class="num">N</th>
+                <th class="num">Average</th>
+                <th class="num">Median</th>
+                <th class="num">Max</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in detail.numeric %}
+                <tr>
+                  <td>{{ row.metric }}</td>
+                  <td class="num">{{ row.n|number }}</td>
+                  <td class="num">{{ row.avg|decimal }}</td>
+                  <td class="num">{{ row.median|decimal }}</td>
+                  <td class="num">{{ row.max|number }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="5">No numeric stats yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
-  </section>
-
-  <section class="two-col">
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Post Coverage</h2>
-      </div>
-      <table>
-        <tbody>
-          <tr><th>Posts</th><td class="num">{{ stats.post_coverage.get('posts')|number }}</td></tr>
-          <tr><th>Posts With URL</th><td class="num">{{ stats.post_coverage.get('posts_with_url')|number }}</td></tr>
-          <tr><th>Posts With HTML</th><td class="num">{{ stats.post_coverage.get('posts_with_html')|number }}</td></tr>
-          <tr><th>Authors With Posts</th><td class="num">{{ stats.post_coverage.get('authors_with_posts')|number }}</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Comments Per Post</h2>
-      </div>
-      <table>
-        <tbody>
-          <tr><th>Commented Posts</th><td class="num">{{ stats.comments_per_post.get('commented_posts')|number }}</td></tr>
-          <tr><th>Min</th><td class="num">{{ stats.comments_per_post.get('min_comments')|number }}</td></tr>
-          <tr><th>Average</th><td class="num">{{ stats.comments_per_post.get('avg_comments')|decimal }}</td></tr>
-          <tr><th>Median</th><td class="num">{{ stats.comments_per_post.get('median_comments')|decimal }}</td></tr>
-          <tr><th>Max</th><td class="num">{{ stats.comments_per_post.get('max_comments')|number }}</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head">
-      <h2>Author Numeric Stats</h2>
-    </div>
-    <table>
-      <thead>
-        <tr>
-          <th>Metric</th>
-          <th class="num">N</th>
-          <th class="num">Min</th>
-          <th class="num">Average</th>
-          <th class="num">Median</th>
-          <th class="num">Max</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in stats.author_numeric %}
-          <tr>
-            <td>{{ row.metric }}</td>
-            <td class="num">{{ row.n|number }}</td>
-            <td class="num">{{ row.min|number }}</td>
-            <td class="num">{{ row.avg|decimal }}</td>
-            <td class="num">{{ row.median|decimal }}</td>
-            <td class="num">{{ row.max|number }}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-
-  <section class="two-col">
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Most Commented Posts</h2>
-      </div>
-      <table>
-        <thead><tr><th>Post ID</th><th class="num">Comments</th></tr></thead>
-        <tbody>
-          {% for row in stats.top_commented_posts %}
-            <tr>
-              <td><a href="{{ url_for('record_detail', collection='weibo_posts_raw', record_id=row.post_id) }}">{{ row.post_id }}</a></td>
-              <td class="num">{{ row.comments|number }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Authors With Most Posts</h2>
-      </div>
-      <table>
-        <thead><tr><th>Author ID</th><th class="num">Posts</th><th class="num">Retrieved</th></tr></thead>
-        <tbody>
-          {% for row in stats.top_authors_by_posts %}
-            <tr>
-              <td><a href="{{ url_for('record_detail', collection='weibo_authors', record_id=row.author_id) }}">{{ row.author_id }}</a></td>
-              <td class="num">{{ row.posts|number }}</td>
-              <td class="num">{{ row.retrieved_posts|number }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
+    </section>
+  {% endfor %}
 {% endblock %}

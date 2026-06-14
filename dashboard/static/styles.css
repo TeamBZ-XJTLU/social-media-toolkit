@@ -181,6 +181,22 @@ p {
   margin-top: 18px;
 }
 
+.three-col,
+.platform-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.platform-section {
+  margin-top: 26px;
+}
+
+.section-head {
+  margin-bottom: 12px;
+}
+
 .panel {
   min-width: 0;
   overflow: hidden;
@@ -233,6 +249,11 @@ tr:last-child td {
   padding: 18px;
 }
 
+.empty-inline {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .bar-row + .bar-row {
   margin-top: 16px;
 }
@@ -261,6 +282,56 @@ tr:last-child td {
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
+}
+
+.platform-card .panel-head {
+  min-height: 48px;
+}
+
+.platform-body {
+  padding: 16px 18px;
+}
+
+.path {
+  overflow: hidden;
+  margin-top: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.status-pill.ok {
+  background: #dff2e5;
+  color: #17633a;
+}
+
+.status-pill.muted {
+  background: #ececea;
+  color: var(--muted);
+}
+
+.compact-table {
+  border-top: 1px solid var(--border);
+}
+
+.compact-table th,
+.compact-table td {
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 .search-form {
@@ -448,6 +519,8 @@ code {
 
   .page-head,
   .two-col,
+  .three-col,
+  .platform-grid,
   .detail-layout,
   .record-row {
     grid-template-columns: 1fr;

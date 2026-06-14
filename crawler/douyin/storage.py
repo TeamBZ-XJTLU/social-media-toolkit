@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from storage import DuplicateRecordError, JsonFileDatabase, Record
+from storage import DuckDBDatabase, DuplicateRecordError, Record
 
 from .utils import csv_from_array_key, value_to_bool, value_to_int, value_to_str
 
@@ -27,9 +27,9 @@ class DouyinVideoStatus(StrEnum):
 
 
 class DouyinStore:
-    """Douyin storage adapter backed by JsonFileDatabase."""
+    """Douyin storage adapter backed by DuckDB."""
 
-    def __init__(self, db: JsonFileDatabase) -> None:
+    def __init__(self, db: DuckDBDatabase) -> None:
         self.db = db
 
     def ensure_author(self, sec_user_id: str) -> Record:

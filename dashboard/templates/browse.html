@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 
-{% block title %}{{ collection_label }} | Weibo Dashboard{% endblock %}
+{% block title %}{{ platform_label }} {{ collection_label }} | Social Media Dashboard{% endblock %}
 
 {% block content %}
   <section class="page-head">
     <div>
-      <h1>{{ collection_label }}</h1>
+      <h1>{{ platform_label }} {{ collection_label }}</h1>
       <p>{{ result.total|number }} rows. Backend: {{ result.backend }}.</p>
     </div>
     <form class="search-form" method="get">
@@ -23,7 +23,7 @@
     {% for row in result.records %}
       <article class="record-row">
         <div class="record-main">
-          <a class="record-title" href="{{ url_for('record_detail', collection=collection, record_id=row.id) }}">{{ row.title }}</a>
+          <a class="record-title" href="{{ url_for('record_detail', platform=platform, collection=collection, record_id=row.id) }}">{{ row.title }}</a>
           {% if row.subtitle %}
             <p>{{ row.subtitle }}</p>
           {% endif %}
@@ -45,13 +45,13 @@
 
   <nav class="pagination" aria-label="Pagination">
     {% if result.page > 1 %}
-      <a href="{{ url_for('browse_collection', collection=collection, q=query, per_page=result.per_page, page=result.page - 1) }}">Previous</a>
+      <a href="{{ url_for('browse_collection', platform=platform, collection=collection, q=query, per_page=result.per_page, page=result.page - 1) }}">Previous</a>
     {% else %}
       <span>Previous</span>
     {% endif %}
     <strong>Page {{ result.page }} of {{ result.pages }}</strong>
     {% if result.page < result.pages %}
-      <a href="{{ url_for('browse_collection', collection=collection, q=query, per_page=result.per_page, page=result.page + 1) }}">Next</a>
+      <a href="{{ url_for('browse_collection', platform=platform, collection=collection, q=query, per_page=result.per_page, page=result.page + 1) }}">Next</a>
     {% else %}
       <span>Next</span>
     {% endif %}

@@ -3,22 +3,26 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}Weibo Dashboard{% endblock %}</title>
+    <title>{% block title %}Social Media Dashboard{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   </head>
   <body>
     <header class="topbar">
       <a class="brand" href="{{ url_for('index') }}">
         <span class="brand-mark"></span>
-        <span>Weibo DB</span>
+        <span>Social Media DB</span>
       </a>
       <nav class="nav">
         <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Overview</a>
-        {% for key, label in collections.items() %}
-          <a href="{{ url_for('browse_collection', collection=key) }}" class="{% if collection|default('') == key %}active{% endif %}">{{ label }}</a>
+        {% for platform_key, platform_config in platforms.items() %}
+          {% for collection_key, collection_config in platform_config.collections.items() %}
+            <a href="{{ url_for('browse_collection', platform=platform_key, collection=collection_key) }}" class="{% if platform|default('') == platform_key and collection|default('') == collection_key %}active{% endif %}">
+              {{ platform_config.label }} {{ collection_config.label }}
+            </a>
+          {% endfor %}
         {% endfor %}
       </nav>
-      <div class="db-path" title="{{ db_path }}">{{ db_path }}</div>
+      <div class="db-path" title="{{ db_paths }}">{{ "single DB override" if db_override else "data/<platform>.duckdb" }}</div>
     </header>
     <main class="page">
       {% block content %}{% endblock %}

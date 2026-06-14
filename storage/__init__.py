@@ -1,7 +1,5 @@
 from .database import (
     DuckDBDatabase,
-    JsonCollectionDirectoryDatabase,
-    JsonFileDatabase,
     JsonValue,
     Record,
 )
@@ -17,8 +15,6 @@ __all__ = [
     "DatabaseError",
     "DuplicateRecordError",
     "DuckDBDatabase",
-    "JsonCollectionDirectoryDatabase",
-    "JsonFileDatabase",
     "JsonValue",
     "Record",
     "RecordNotFoundError",

@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 from urllib.parse import quote
 
-from storage import DuplicateRecordError, JsonFileDatabase, Record
+from storage import DuckDBDatabase, DuplicateRecordError, Record
 
 
 AUTHOR_COLLECTION = "rednote_authors"
@@ -19,9 +19,9 @@ class RednotePostStatus(StrEnum):
 
 
 class RednoteStore:
-    """Rednote/XHS storage adapter backed by JsonFileDatabase."""
+    """Rednote/XHS storage adapter backed by DuckDB."""
 
-    def __init__(self, db: JsonFileDatabase) -> None:
+    def __init__(self, db: DuckDBDatabase) -> None:
         self.db = db
 
     def ensure_author(self, author_id: str, name: str | None = None) -> Record:

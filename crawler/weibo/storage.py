@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from storage import DuplicateRecordError, JsonFileDatabase, Record
+from storage import DuckDBDatabase, DuplicateRecordError, Record
 
 from .utils import value_to_bool, value_to_int, value_to_str
 
@@ -20,9 +20,9 @@ class WeiboPostStatus(StrEnum):
 
 
 class WeiboStore:
-    """Weibo storage adapter backed by JsonFileDatabase."""
+    """Weibo storage adapter backed by DuckDB."""
 
-    def __init__(self, db: JsonFileDatabase) -> None:
+    def __init__(self, db: DuckDBDatabase) -> None:
         self.db = db
 
     def ensure_author(self, author_id: str, name: str | None = None) -> Record:

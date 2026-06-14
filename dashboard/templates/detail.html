@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 
-{% block title %}{{ record.id }} | Weibo Dashboard{% endblock %}
+{% block title %}{{ record.id }} | Social Media Dashboard{% endblock %}
 
 {% block content %}
   <section class="page-head">
     <div>
-      <h1>{{ collection_label }} Record</h1>
+      <h1>{{ platform_label }} {{ collection_label }} Record</h1>
       <p>ID: {{ record.id }}. Backend: {{ backend }}. Updated: {{ record.updated_at or "-" }}.</p>
     </div>
-    <a class="button-link" href="{{ url_for('browse_collection', collection=collection) }}">Back to {{ collection_label }}</a>
+    <a class="button-link" href="{{ url_for('browse_collection', platform=platform, collection=collection) }}">Back to {{ platform_label }} {{ collection_label }}</a>
   </section>
 
   <section class="detail-layout">

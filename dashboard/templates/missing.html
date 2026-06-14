@@ -1,12 +1,23 @@
 {% extends "base.html" %}
 
-{% block title %}Database Missing | Weibo Dashboard{% endblock %}
+{% block title %}Database Missing | Social Media Dashboard{% endblock %}
 
 {% block content %}
   <section class="page-head">
     <div>
       <h1>Database Not Ready</h1>
-      <p>Could not find a DuckDB database with a `records` table at {{ db_path }}.</p>
+      <p>Could not find any ready DuckDB crawler database.</p>
     </div>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>Checked Paths</h2></div>
+    <table>
+      <thead><tr><th>Platform</th><th>Path</th></tr></thead>
+      <tbody>
+        {% for platform, path in db_paths.items() %}
+          <tr><td>{{ platform }}</td><td>{{ path }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </section>
 {% endblock %}
