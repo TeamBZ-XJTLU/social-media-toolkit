@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Weibo Dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="{{ url_for('index') }}">
+        <span class="brand-mark"></span>
+        <span>Weibo DB</span>
+      </a>
+      <nav class="nav">
+        <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Overview</a>
+        {% for key, label in collections.items() %}
+          <a href="{{ url_for('browse_collection', collection=key) }}" class="{% if collection|default('') == key %}active{% endif %}">{{ label }}</a>
+        {% endfor %}
+      </nav>
+      <div class="db-path" title="{{ db_path }}">{{ db_path }}</div>
+    </header>
+    <main class="page">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

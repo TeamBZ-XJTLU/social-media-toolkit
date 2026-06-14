@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}Database Missing | Weibo Dashboard{% endblock %}
+
+{% block content %}
+  <section class="page-head">
+    <div>
+      <h1>Database Not Ready</h1>
+      <p>Could not find a DuckDB database with a `records` table at {{ db_path }}.</p>
+    </div>
+  </section>
+{% endblock %}

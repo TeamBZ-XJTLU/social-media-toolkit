@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}{{ record.id }} | Weibo Dashboard{% endblock %}
+
+{% block content %}
+  <section class="page-head">
+    <div>
+      <h1>{{ collection_label }} Record</h1>
+      <p>ID: {{ record.id }}. Backend: {{ backend }}. Updated: {{ record.updated_at or "-" }}.</p>
+    </div>
+    <a class="button-link" href="{{ url_for('browse_collection', collection=collection) }}">Back to {{ collection_label }}</a>
+  </section>
+
+  <section class="detail-layout">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Fields</h2>
+      </div>
+      <table>
+        <tbody>
+          {% for key, value in record.record.items() %}
+            <tr>
+              <th>{{ key }}</th>
+              <td>
+                {% if value is mapping or value is sequence and value is not string %}
+                  <code>{{ value|tojson }}</code>
+                {% else %}
+                  {{ value }}
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Raw JSON</h2>
+      </div>
+      <pre class="json-block"><code>{{ record.pretty_json }}</code></pre>
+    </div>
+  </section>
+{% endblock %}
