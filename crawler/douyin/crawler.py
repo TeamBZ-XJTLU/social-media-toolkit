@@ -45,11 +45,13 @@ class DouyinCrawler(BrowserCrawler[DouyinCrawlerConfig, DouyinStore]):
     async def by_keyword(self, keyword: str, **kwargs: Any) -> None:
         raise NotImplementedError("Douyin keyword search is not implemented yet.")
 
+    async def download_from_url(self, url: str, **kwargs: Any) -> None:
+        raise NotImplementedError("Douyin download_from_url is not implemented yet.")
+
     async def by_author(
         self,
         sec_user_id: str,
         *,
-        id_only: bool = False,
         collect_comments: bool | None = None,
         restrict_to_aweme_ids: Iterable[str] | None = None,
         use_local_index: bool = False,
@@ -70,10 +72,9 @@ class DouyinCrawler(BrowserCrawler[DouyinCrawlerConfig, DouyinStore]):
             logger.info("Douyin discovery saved {} videos", len(discovered_videos))
 
         restrict_set = set(restrict_to_aweme_ids or [])
-        if id_only or not collect_comments:
+        if not collect_comments:
             logger.info(
-                "Douyin scrape stopped before comment collection (id_only={}, collect_comments={})",
-                id_only,
+                "Douyin scrape stopped before comment collection (collect_comments={})",
                 collect_comments,
             )
             return

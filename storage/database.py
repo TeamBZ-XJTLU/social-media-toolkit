@@ -27,6 +27,7 @@ _COLLECTION_TABLES = {
     "rednote_posts": "rednote_posts",
     "rednote_posts_raw": "rednote_posts",
     "rednote_post_metadata": "rednote_post_metadata",
+    "rednote_post_media_files": "rednote_post_media_files",
     "rednote_comments": "rednote_comments",
     "douyin_authors": "douyin_authors",
     "douyin_posts": "douyin_posts",
@@ -39,10 +40,13 @@ _PLATFORM_TABLES = sorted(set(_COLLECTION_TABLES.values()))
 
 _REDNOTE_POST_COLUMNS = {
     "title": "TEXT",
+    "content": "TEXT",
     "time": "BIGINT",
     "lastUpdateTime": "BIGINT",
     "noteId": "TEXT",
     "ipLocation": "TEXT",
+    "tags": "JSON",
+    "images": "JSON",
     "followed": "BOOLEAN",
     "relation": "TEXT",
     "liked": "BOOLEAN",
@@ -51,6 +55,25 @@ _REDNOTE_POST_COLUMNS = {
     "collectedCount": "BIGINT",
     "commentCount": "BIGINT",
     "shareCount": "BIGINT",
+}
+
+_REDNOTE_MEDIA_FILE_COLUMNS = {
+    "media_url": "TEXT",
+    "media_type": "TEXT",
+    "local_path": "TEXT",
+}
+
+_REDNOTE_COMMENT_COLUMNS = {
+    "parent_post_id": "TEXT",
+    "parent_comment_id": "TEXT",
+    "comment_id": "TEXT",
+    "user_id": "TEXT",
+    "user_name": "TEXT",
+    "content": "TEXT",
+    "like_count": "BIGINT",
+    "sub_comment_count": "BIGINT",
+    "create_time": "BIGINT",
+    "ip_location": "TEXT",
 }
 
 
@@ -100,6 +123,8 @@ class DuckDBDatabase:
                     [collection, rid],
                 ).fetchone()
             else:
+                if not self._table_exists(table):
+                    return None
                 row = self._conn.execute(
                     f"SELECT data FROM {table} WHERE id = ?",
                     [rid],
@@ -119,6 +144,8 @@ class DuckDBDatabase:
                     [collection],
                 ).fetchall()
             else:
+                if not self._table_exists(table):
+                    return []
                 rows = self._conn.execute(
                     f"SELECT data FROM {table} ORDER BY id",
                 ).fetchall()
@@ -185,7 +212,8 @@ class DuckDBDatabase:
             if collection is None:
                 self._conn.execute("DELETE FROM records")
                 for table in _PLATFORM_TABLES:
-                    self._conn.execute(f"DELETE FROM {table}")
+                    if self._table_exists(table):
+                        self._conn.execute(f"DELETE FROM {table}")
                 self._conn.execute("DELETE FROM tasks")
                 return
 
@@ -194,6 +222,8 @@ class DuckDBDatabase:
             if table is None:
                 self._conn.execute("DELETE FROM records WHERE collection = ?", [collection])
             else:
+                if not self._table_exists(table):
+                    return
                 self._conn.execute(f"DELETE FROM {table}")
 
     def save_task(
@@ -288,8 +318,6 @@ class DuckDBDatabase:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS records_collection_idx ON records(collection)"
             )
-            for table in _PLATFORM_TABLES:
-                self._create_platform_table(table)
             self._migrate_legacy_records_table()
 
     def _create_platform_table(self, table: str) -> None:
@@ -298,6 +326,16 @@ class DuckDBDatabase:
             extra_columns = "".join(
                 f",\n                {self._quote_identifier(column)} {column_type}"
                 for column, column_type in _REDNOTE_POST_COLUMNS.items()
+            )
+        elif table == "rednote_post_media_files":
+            extra_columns = "".join(
+                f",\n                {self._quote_identifier(column)} {column_type}"
+                for column, column_type in _REDNOTE_MEDIA_FILE_COLUMNS.items()
+            )
+        elif table == "rednote_comments":
+            extra_columns = "".join(
+                f",\n                {self._quote_identifier(column)} {column_type}"
+                for column, column_type in _REDNOTE_COMMENT_COLUMNS.items()
             )
         self._conn.execute(
             f"""
@@ -321,12 +359,49 @@ class DuckDBDatabase:
                     f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS "
                     f"{self._quote_identifier(column)} {column_type}"
                 )
+        elif table == "rednote_post_media_files":
+            for column, column_type in _REDNOTE_MEDIA_FILE_COLUMNS.items():
+                self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS "
+                    f"{self._quote_identifier(column)} {column_type}"
+                )
+        elif table == "rednote_comments":
+            for column, column_type in _REDNOTE_COMMENT_COLUMNS.items():
+                self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS "
+                    f"{self._quote_identifier(column)} {column_type}"
+                )
         self._conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_task_idx ON {table}(task_id)")
         self._conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_author_idx ON {table}(author_id)")
         self._conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_post_idx ON {table}(post_id)")
         self._conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_keyword_idx ON {table}(keyword)")
         self._conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_status_idx ON {table}(status)")
         self._conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_updated_idx ON {table}(updated_at)")
+        if table == "rednote_post_media_files":
+            self._conn.execute(
+                f"CREATE INDEX IF NOT EXISTS {table}_media_url_idx ON {table}(media_url)"
+            )
+            self._conn.execute(
+                f"CREATE INDEX IF NOT EXISTS {table}_media_type_idx ON {table}(media_type)"
+            )
+        if table == "rednote_comments":
+            self._conn.execute(
+                f"CREATE INDEX IF NOT EXISTS {table}_parent_post_idx ON {table}(parent_post_id)"
+            )
+            self._conn.execute(
+                f"CREATE INDEX IF NOT EXISTS {table}_parent_comment_idx ON {table}(parent_comment_id)"
+            )
+            self._conn.execute(
+                f"CREATE INDEX IF NOT EXISTS {table}_comment_idx ON {table}(comment_id)"
+            )
+            self._conn.execute(
+                f"CREATE INDEX IF NOT EXISTS {table}_user_idx ON {table}(user_id)"
+            )
+
+    def _ensure_platform_table(self, table: str) -> None:
+        if table not in _PLATFORM_TABLES:
+            raise ValueError(f"Unknown platform table: {table}")
+        self._create_platform_table(table)
 
     def _replace_existing(self, collection: str, record_id: str, record: Record) -> None:
         self._delete_existing(collection, record_id)
@@ -361,6 +436,7 @@ class DuckDBDatabase:
                 )
             return
 
+        self._ensure_platform_table(table)
         indexed = self._indexed_values(collection, record)
         extra_indexed = self._extra_indexed_values(table, record)
         columns = ["id", "data", "updated_at", "task_id", "author_id", "post_id", "keyword", "status", "url"]
@@ -417,6 +493,8 @@ class DuckDBDatabase:
                 [collection, record_id],
             )
             return
+        if not self._table_exists(table):
+            return
         self._conn.execute(f"DELETE FROM {table} WHERE id = ?", [record_id])
 
     def _table_for_collection(self, collection: str) -> str | None:
@@ -433,17 +511,29 @@ class DuckDBDatabase:
         }
 
     def _extra_indexed_values(self, table: str, record: Mapping[str, JsonValue]) -> dict[str, Any]:
-        if table != "rednote_posts":
-            return {}
-        return {
-            column: self._extra_column_value(column, record.get(column))
-            for column in _REDNOTE_POST_COLUMNS
-        }
+        if table == "rednote_posts":
+            return {
+                column: self._extra_column_value(column, record.get(column))
+                for column in _REDNOTE_POST_COLUMNS
+            }
+        if table == "rednote_post_media_files":
+            return {
+                column: self._string_or_none(record.get(column))
+                for column in _REDNOTE_MEDIA_FILE_COLUMNS
+            }
+        if table == "rednote_comments":
+            return {
+                column: self._typed_extra_column_value(column_type, record.get(column))
+                for column, column_type in _REDNOTE_COMMENT_COLUMNS.items()
+            }
+        return {}
 
     def _extra_column_value(self, column: str, value: Any) -> Any:
+        return self._typed_extra_column_value(_REDNOTE_POST_COLUMNS[column], value)
+
+    def _typed_extra_column_value(self, column_type: str, value: Any) -> Any:
         if value is None:
             return None
-        column_type = _REDNOTE_POST_COLUMNS[column]
         if column_type == "BIGINT":
             if isinstance(value, bool):
                 return int(value)
@@ -472,6 +562,11 @@ class DuckDBDatabase:
                 if normalized in {"false", "0", "no", "n"}:
                     return False
             return None
+        if column_type == "JSON":
+            try:
+                return orjson.dumps(value).decode("utf-8")
+            except TypeError:
+                return None
         return self._string_or_none(value)
 
     def _author_id(self, collection: str, record: Mapping[str, JsonValue]) -> str | None:
@@ -494,7 +589,7 @@ class DuckDBDatabase:
             "douyin_videos_raw",
         }:
             return self._string_or_none(record.get("id"))
-        for key in ("post_id", "aweme_id", "uid"):
+        for key in ("post_id", "parent_post_id", "note_id", "aweme_id", "uid"):
             value = self._string_or_none(record.get(key))
             if value:
                 return value
@@ -550,7 +645,8 @@ class DuckDBDatabase:
             FROM records
             WHERE collection IN (
                 'weibo_authors', 'weibo_posts_raw', 'weibo_comments',
-                'rednote_authors', 'rednote_posts_raw', 'rednote_post_metadata', 'rednote_comments',
+                'rednote_authors', 'rednote_posts_raw', 'rednote_post_metadata',
+                'rednote_post_media_files', 'rednote_comments',
                 'douyin_authors', 'douyin_videos_raw', 'douyin_comments_raw'
             )
             """
@@ -560,6 +656,7 @@ class DuckDBDatabase:
             if table is None:
                 continue
             record = self._load_record(payload)
+            self._ensure_platform_table(table)
             self._conn.execute(f"DELETE FROM {table} WHERE id = ?", [str(record_id)])
             self._insert_record(
                 str(collection),

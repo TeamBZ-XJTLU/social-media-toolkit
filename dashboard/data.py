@@ -67,6 +67,11 @@ PLATFORMS: dict[str, PlatformConfig] = {
                 "rednote_post_metadata",
                 ("$.id", "$.title", "$.author_id", "$.author_name", "$.search_keyword", "$.url"),
             ),
+            "rednote_post_media_files": CollectionConfig(
+                "Media Files",
+                "rednote_post_media_files",
+                ("$.id", "$.post_id", "$.media_url", "$.media_type", "$.local_path"),
+            ),
             "rednote_comments": CollectionConfig(
                 "Comments",
                 "rednote_comments",

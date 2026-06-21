@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from uuid import uuid4
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from loguru import logger
 
@@ -13,6 +16,7 @@ from storage import DuckDBDatabase
 from .storage import (
     RednoteStore,
     extract_initial_state_from_html,
+    extract_og_image_urls_from_html,
     extract_post_detail_from_initial_state,
 )
 from .utils import (
@@ -33,6 +37,8 @@ from .utils import (
 
 SEARCH_RESULT_AI_URL = "https://www.xiaohongshu.com/search_result_ai"
 SEARCH_NOTES_API_URL = "https://so.xiaohongshu.com/api/sns/web/v2/search/notes"
+COMMENT_PAGE_API_URL = "https://edith.xiaohongshu.com/api/sns/web/v2/comment/page"
+COMMENT_SUB_PAGE_API_URL = "https://edith.xiaohongshu.com/api/sns/web/v2/comment/sub/page"
 SEARCH_NOTES_IDLE_TIMEOUT_SECONDS = 60.0
 
 
@@ -55,7 +61,6 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
         self,
         author_id: str,
         *,
-        id_only: bool = False,
         restrict_to_post_ids: Iterable[str] | None = None,
         use_local_index: bool = False,
         task_id: str | None = None,
@@ -100,9 +105,6 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
 
             logger.info("Total Rednote post IDs discovered: {}", len(processed))
 
-        if id_only:
-            return
-
         if use_local_index:
             logger.info("Navigating to {} for Rednote login/session check", BASE_URL)
             await page.goto(BASE_URL)
@@ -122,7 +124,6 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
         self,
         keyword: str,
         *,
-        id_only: bool = False,
         restrict_to_post_ids: Iterable[str] | None = None,
         use_local_index: bool = False,
         task_id: str | None = None,
@@ -139,12 +140,8 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
             await self._collect_keyword_search_metadata(
                 page,
                 keyword=keyword,
-                scrape_details=not id_only,
                 task_id=task_id,
             )
-            return
-
-        if id_only:
             return
 
         if use_local_index:
@@ -162,12 +159,40 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
     async def scrape_keyword(self, keyword: str, **kwargs: Any) -> None:
         await self.by_keyword(keyword, **kwargs)
 
+    async def download_from_url(
+        self,
+        url: str,
+        *,
+        author_id: str = "unknown",
+        task_id: str | None = None,
+        page: Any | None = None,
+    ) -> None:
+        page = page or await self._new_page()
+        logger.info("Navigating to {} for Rednote login/session check", BASE_URL)
+        await page.goto(BASE_URL)
+        await self._wait_for_manual_action(page)
+
+        post_id = self._post_id_from_url(url)
+        post_url = normalize_post_url(url)
+        self.store.save_post_raw(
+            post_id,
+            author_id,
+            url=post_url,
+            task_id=task_id,
+        )
+        await self._scrape_one_post(
+            post_id,
+            post_url,
+            context=page.context,
+            author_id=author_id,
+            task_id=task_id,
+        )
+
     async def _collect_keyword_search_metadata(
         self,
         page: Any,
         *,
         keyword: str,
-        scrape_details: bool,
         task_id: str | None,
     ) -> None:
         loop = asyncio.get_running_loop()
@@ -199,9 +224,6 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
                 saved_note_count += len(saved_records)
                 logger.info("Saved {} Rednote search note metadata records", len(saved_records))
 
-                if not scrape_details:
-                    return
-
                 for record in saved_records:
                     post_id = str(record.get("post_id") or record.get("uid") or record.get("id") or "")
                     post_url = str(record.get("url") or "")
@@ -215,8 +237,11 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
                         url=post_url,
                         task_id=task_id,
                     )
-                    if self.store.is_post_already_scraped(post_id):
-                        logger.info("Rednote post {} already has details, skipping", post_id)
+                    if (
+                        self.store.is_post_already_scraped(post_id)
+                        and self.store.is_post_detail_parsed(post_id)
+                    ):
+                        logger.info("Rednote post {} already has parsed details, skipping", post_id)
                         continue
                     detail_attempt_count += 1
                     await self._scrape_one_post(
@@ -286,6 +311,13 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
         params = {"keyword": keyword, "source": "web_explore_feed"}
         return f"{SEARCH_RESULT_AI_URL}?{urlencode(params)}"
 
+    def _post_id_from_url(self, url: str) -> str:
+        path = urlparse(normalize_post_url(url)).path.rstrip("/")
+        post_id = path.rsplit("/", 1)[-1]
+        if not post_id:
+            raise ValueError(f"Could not extract Rednote post id from URL: {url}")
+        return post_id
+
     def _save_discovered_post_ids(
         self,
         post_ids: set[tuple[str, str]],
@@ -348,8 +380,41 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
         logger.info("Opening post: {}", full_url)
 
         post_page = await context.new_page()
+        pending_comment_tasks: set[asyncio.Task[None]] = set()
+
+        async def save_comment_response(response: Any) -> None:
+            try:
+                payload = await response.json()
+            except Exception as exc:
+                logger.debug("Could not parse Rednote comment response for {}: {}", post_id, exc)
+                return
+            if not isinstance(payload, dict):
+                return
+            saved_count = self.store.save_comments_from_response(
+                payload,
+                post_id=post_id,
+                parent_comment_id=self._comment_parent_id_from_url(str(response.url)),
+                task_id=task_id,
+            )
+            if saved_count:
+                logger.info("Saved {} Rednote comments for {}", saved_count, post_id)
+
+        def on_response(response: Any) -> None:
+            if not self._is_comment_page_response(response, post_id):
+                return
+            task = asyncio.create_task(save_comment_response(response))
+            pending_comment_tasks.add(task)
+            task.add_done_callback(pending_comment_tasks.discard)
+
+        post_page.on("response", on_response)
         try:
-            await post_page.goto(full_url)
+            document_html: str | None = None
+            response = await post_page.goto(full_url)
+            if response is not None:
+                try:
+                    document_html = await response.text()
+                except Exception as exc:
+                    logger.debug("Could not read Rednote document response for {}: {}", post_id, exc)
             await post_page.wait_for_timeout(self.config.post_open_delay_ms)
 
             rate_limited = await post_page.evaluate(
@@ -359,38 +424,70 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
                 logger.info("Rate limit detected, skipping post {}", post_id)
                 return
 
+            initial_state = extract_initial_state_from_html(document_html or "")
+            if not isinstance(initial_state, dict):
+                initial_state = await post_page.evaluate(
+                    """
+                    () => {
+                        const state = window.__INITIAL_STATE__;
+                        if (!state) {
+                            return null;
+                        }
+                        try {
+                            return JSON.parse(JSON.stringify(state));
+                        } catch (error) {
+                            return null;
+                        }
+                    }
+                    """
+                )
+            if not isinstance(initial_state, dict):
+                page_content = await post_page.content()
+                initial_state = extract_initial_state_from_html(page_content)
+            else:
+                page_content = ""
+            image_urls = extract_og_image_urls_from_html(document_html or "")
+            if not image_urls:
+                if not page_content:
+                    page_content = await post_page.content()
+                image_urls = extract_og_image_urls_from_html(page_content)
+            parsed = extract_post_detail_from_initial_state(
+                initial_state,
+                fallback_post_id=post_id,
+                image_urls=image_urls,
+            )
+            if not parsed.get("noteId"):
+                logger.warning("Rednote initial state did not contain parsed note data for {}", post_id)
+            parsed_author_id = parsed.get("author_id")
+            if parsed_author_id:
+                author_id = str(parsed_author_id)
+
             await post_page.wait_for_timeout(self.config.post_load_delay_ms)
             note_exists = await post_page.evaluate(
                 "Boolean(document.querySelector('#noteContainer'))"
             )
             if not note_exists:
                 logger.info("#noteContainer not found for {}", post_id)
+                if parsed:
+                    self.store.save_post_raw(
+                        post_id,
+                        author_id,
+                        url=full_url,
+                        task_id=task_id,
+                        parsed=parsed,
+                    )
+                    await self._download_post_media_files(
+                        post_page,
+                        post_id=post_id,
+                        parsed=parsed,
+                        referer=full_url,
+                        task_id=task_id,
+                    )
                 return
 
             if await get_comments_container(post_page):
                 await scroll_to_load_all_comments(post_page)
                 await expand_all_sub_comments(post_page)
-
-            initial_state = await post_page.evaluate(
-                """
-                () => {
-                    const state = window.__INITIAL_STATE__;
-                    if (!state) {
-                        return null;
-                    }
-                    return JSON.parse(JSON.stringify(state));
-                }
-                """
-            )
-            if not isinstance(initial_state, dict):
-                initial_state = extract_initial_state_from_html(await post_page.content())
-            parsed = extract_post_detail_from_initial_state(
-                initial_state,
-                fallback_post_id=post_id,
-            )
-            parsed_author_id = parsed.get("author_id")
-            if parsed_author_id:
-                author_id = str(parsed_author_id)
 
             html = await post_page.evaluate("document.querySelector('#noteContainer')?.innerHTML")
             if html:
@@ -402,9 +499,151 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
                     task_id=task_id,
                     parsed=parsed,
                 )
+                await self._download_post_media_files(
+                    post_page,
+                    post_id=post_id,
+                    parsed=parsed,
+                    referer=full_url,
+                    task_id=task_id,
+                )
                 logger.info("Captured post {} ({} bytes)", post_id, len(str(html)))
         finally:
+            try:
+                post_page.remove_listener("response", on_response)
+            except Exception:
+                pass
+            if pending_comment_tasks:
+                await asyncio.gather(*pending_comment_tasks, return_exceptions=True)
             await post_page.close()
+
+    def _is_comment_page_response(self, response: Any, post_id: str) -> bool:
+        url = str(getattr(response, "url", "") or "")
+        if not (url.startswith(COMMENT_PAGE_API_URL) or url.startswith(COMMENT_SUB_PAGE_API_URL)):
+            return False
+        request = getattr(response, "request", None)
+        method = str(getattr(request, "method", "GET") or "GET").upper()
+        if method != "GET":
+            return False
+        parsed = urlparse(url)
+        note_ids = parse_qs(parsed.query).get("note_id") or []
+        return post_id in note_ids if note_ids else True
+
+    def _comment_parent_id_from_url(self, url: str) -> str | None:
+        parsed = urlparse(url)
+        query = parse_qs(parsed.query)
+        for key in ("root_comment_id", "comment_id", "parent_comment_id"):
+            values = query.get(key) or []
+            if values:
+                return values[0]
+        return None
+
+    async def _download_post_media_files(
+        self,
+        page: Any,
+        *,
+        post_id: str,
+        parsed: dict[str, Any],
+        referer: str,
+        task_id: str | None,
+    ) -> None:
+        if not self.config.download_media:
+            return
+
+        image_urls = parsed.get("images")
+        if not isinstance(image_urls, list):
+            return
+
+        media_dir = Path(self.config.media_download_dir or "data/media/rednote")
+        media_dir.mkdir(parents=True, exist_ok=True)
+        downloaded_count = 0
+
+        for image_url_value in image_urls:
+            if not isinstance(image_url_value, str) or not image_url_value:
+                continue
+            existing = self.store.get_post_media_file(post_id, image_url_value)
+            if existing and existing.get("local_path") and Path(str(existing["local_path"])).exists():
+                continue
+
+            try:
+                content, content_type = await self._fetch_media_bytes(
+                    page,
+                    image_url_value,
+                    referer=referer,
+                )
+            except Exception as exc:
+                logger.warning("Could not download Rednote image {}: {}", image_url_value, exc)
+                continue
+
+            suffix = self._media_file_suffix(image_url_value, content_type)
+            local_path = media_dir / f"{uuid4().hex}{suffix}"
+            local_path.write_bytes(content)
+            self.store.save_post_media_file(
+                post_id=post_id,
+                media_url=image_url_value,
+                media_type="image",
+                local_path=str(local_path),
+                task_id=task_id,
+            )
+            downloaded_count += 1
+
+        if downloaded_count:
+            logger.info("Downloaded {} Rednote media files for {}", downloaded_count, post_id)
+
+    async def _fetch_media_bytes(
+        self,
+        page: Any,
+        media_url: str,
+        *,
+        referer: str,
+    ) -> tuple[bytes, str | None]:
+        request_context = getattr(page.context, "request", None)
+        if request_context is not None:
+            response = await request_context.get(media_url, headers={"referer": referer})
+            status = int(getattr(response, "status", 0) or 0)
+            if status < 400:
+                headers = getattr(response, "headers", {}) or {}
+                content_type = headers.get("content-type") if isinstance(headers, dict) else None
+                return await response.body(), content_type
+
+        result = await page.evaluate(
+            """
+            async ({ mediaUrl }) => {
+                const response = await fetch(mediaUrl, { credentials: "include" });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                const contentType = response.headers.get("content-type");
+                const bytes = new Uint8Array(await response.arrayBuffer());
+                let binary = "";
+                const chunkSize = 0x8000;
+                for (let index = 0; index < bytes.length; index += chunkSize) {
+                    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+                }
+                return { body: btoa(binary), contentType };
+            }
+            """,
+            {"mediaUrl": media_url},
+        )
+        if not isinstance(result, dict) or not isinstance(result.get("body"), str):
+            raise RuntimeError("Browser fetch did not return media bytes.")
+        content_type = result.get("contentType") if isinstance(result.get("contentType"), str) else None
+        return base64.b64decode(result["body"]), content_type
+
+    def _media_file_suffix(self, media_url: str, content_type: str | None) -> str:
+        normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
+        if normalized_content_type == "image/jpeg":
+            return ".jpg"
+        if normalized_content_type == "image/png":
+            return ".png"
+        if normalized_content_type == "image/webp":
+            return ".webp"
+        if normalized_content_type == "image/gif":
+            return ".gif"
+
+        suffix = Path(urlparse(media_url).path).suffix.lower()
+        if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+            return ".jpg" if suffix == ".jpeg" else suffix
+        return ".bin"
 
     async def _wait_for_manual_action(self, page: Any) -> None:
         await check_and_wait_for_user_action(

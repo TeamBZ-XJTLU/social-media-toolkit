@@ -44,10 +44,22 @@ Override the database path with the root `--db` option:
 uv run main.py --db data/custom.duckdb weibo keyword 卫健委
 ```
 
+Set the root media download directory with `--media-dir`. The crawler creates a platform subdirectory inside it, such as `downloads/media/weibo`, `downloads/media/rednote`, or `downloads/media/douyin`:
+
+```bash
+uv run main.py --media-dir downloads/media rednote keyword 卫健委
+```
+
+Media download is enabled by default. Disable it with `--no-download-media`:
+
+```bash
+uv run main.py --no-download-media rednote keyword 卫健委
+```
+
 Known collections are routed to physical DuckDB tables:
 
 - `weibo_authors`, `weibo_posts`, `weibo_comments`
-- `rednote_authors`, `rednote_posts`, `rednote_post_metadata`, `rednote_comments`
+- `rednote_authors`, `rednote_posts`, `rednote_post_metadata`, `rednote_post_media_files`, `rednote_comments`
 - `douyin_authors`, `douyin_posts`, `douyin_comments`
 - `tasks`
 
@@ -66,7 +78,7 @@ On first run, keep the browser visible, log in manually, then continue the task 
 Global options must be placed before the command:
 
 ```bash
-uv run main.py --headless --id-only weibo keyword 卫健委
+uv run main.py --headless weibo keyword 卫健委
 ```
 
 ## Task IDs
@@ -224,7 +236,7 @@ The TUI builds the same CLI commands, previews them, runs them, and streams outp
 Root options still go before `ui`:
 
 ```bash
-uv run main.py --headless --id-only ui
+uv run main.py --media-dir downloads/media --no-download-media --headless ui
 ```
 
 ## Dashboard

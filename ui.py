@@ -114,17 +114,19 @@ class SocialMediaToolkitApp(App[None]):
         self,
         *,
         default_db: Path | None = None,
+        default_media_dir: Path | None = None,
+        default_download_media: bool = True,
         default_user_data_dir: Path | None = None,
         default_headless: bool = False,
-        default_id_only: bool = False,
         default_task_id: str | None = None,
         main_path: Path | None = None,
     ) -> None:
         super().__init__()
         self.default_db = default_db
+        self.default_media_dir = default_media_dir
+        self.default_download_media = default_download_media
         self.default_user_data_dir = default_user_data_dir
         self.default_headless = default_headless
-        self.default_id_only = default_id_only
         self.default_task_id = default_task_id
         self.main_path = main_path or Path(__file__).with_name("main.py")
         self.process: asyncio.subprocess.Process | None = None
@@ -141,13 +143,18 @@ class SocialMediaToolkitApp(App[None]):
                 yield Label("Global", classes="section-title")
                 yield Input(value=str(self.default_db or ""), placeholder="Database path override", id="db")
                 yield Input(
+                    value=str(self.default_media_dir or ""),
+                    placeholder="Media download directory",
+                    id="media-dir",
+                )
+                yield Input(
                     value=str(self.default_user_data_dir or ""),
                     placeholder="Browser profile directory override",
                     id="user-data-dir",
                 )
                 yield Input(value=self.default_task_id or "", placeholder="Task ID override", id="task-id")
+                yield Checkbox("Download media files", value=self.default_download_media, id="download-media")
                 yield Checkbox("Headless browser", value=self.default_headless, id="headless")
-                yield Checkbox("ID only", value=self.default_id_only, id="id-only")
                 yield Checkbox("Use local index", id="from-local")
                 yield Checkbox("Skip comments", id="no-comments")
 
@@ -364,10 +371,12 @@ class SocialMediaToolkitApp(App[None]):
 
     def _add_global_options(self, args: list[str]) -> None:
         self._add_text_option(args, "db", "--db")
+        self._add_text_option(args, "media-dir", "--media-dir")
         self._add_text_option(args, "user-data-dir", "--user-data-dir")
         self._add_text_option(args, "task-id", "--task-id")
+        if not self.query_one("#download-media", Checkbox).value:
+            args.append("--no-download-media")
         self._add_flag(args, "headless", "--headless")
-        self._add_flag(args, "id-only", "--id-only")
 
     def _add_text_option(self, args: list[str], widget_id: str, option: str) -> None:
         value = self._input_value(widget_id)
@@ -410,15 +419,17 @@ class SocialMediaToolkitApp(App[None]):
 def run_ui(
     *,
     default_db: Path | None = None,
+    default_media_dir: Path | None = None,
+    default_download_media: bool = True,
     default_user_data_dir: Path | None = None,
     default_headless: bool = False,
-    default_id_only: bool = False,
     default_task_id: str | None = None,
 ) -> None:
     SocialMediaToolkitApp(
         default_db=default_db,
+        default_media_dir=default_media_dir,
+        default_download_media=default_download_media,
         default_user_data_dir=default_user_data_dir,
         default_headless=default_headless,
-        default_id_only=default_id_only,
         default_task_id=default_task_id,
     ).run()

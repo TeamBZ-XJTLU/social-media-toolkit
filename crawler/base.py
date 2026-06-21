@@ -17,6 +17,8 @@ PromptFn = Callable[[str], None | Awaitable[None]]
 @dataclass(slots=True)
 class BrowserCrawlerConfig:
     db_path: str | Path
+    media_download_dir: str | Path | None = None
+    download_media: bool = True
     headless: bool = False
     user_data_dir: str | Path | None = None
     storage_state: str | Path | None = None
@@ -46,6 +48,8 @@ class BrowserCrawler(Generic[ConfigT, StoreT], ABC):
             raise TypeError(f"{type(self).__name__} must define store_cls.")
 
         self.config = config
+        if config.media_download_dir is not None:
+            Path(config.media_download_dir).mkdir(parents=True, exist_ok=True)
         self.db = self.db_cls(config.db_path)
         self.store: StoreT = self.store_cls(self.db)
         self.prompt = prompt
@@ -96,6 +100,10 @@ class BrowserCrawler(Generic[ConfigT, StoreT], ABC):
     @abstractmethod
     async def by_keyword(self, keyword: str, **kwargs: Any) -> None:
         """Crawl content from one platform-specific keyword search."""
+
+    @abstractmethod
+    async def download_from_url(self, url: str, **kwargs: Any) -> None:
+        """Download one platform-specific content item from its public URL."""
 
     @property
     def context(self) -> Any:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from loguru import logger
 
@@ -50,7 +50,6 @@ class WeiboCrawler(BrowserCrawler[WeiboCrawlerConfig, WeiboStore]):
         self,
         keyword: str,
         *,
-        id_only: bool = False,
         max_pages: int | None = None,
         search_params: Mapping[str, str | int] | None = None,
         task_id: str | None = None,
@@ -112,7 +111,6 @@ class WeiboCrawler(BrowserCrawler[WeiboCrawlerConfig, WeiboStore]):
                     keyword=keyword,
                     page_number=page_number,
                     task_id=task_id,
-                    id_only=id_only,
                 ):
                     saved_count += 1
             logger.info(
@@ -149,7 +147,6 @@ class WeiboCrawler(BrowserCrawler[WeiboCrawlerConfig, WeiboStore]):
         self,
         author_id: str,
         *,
-        id_only: bool = False,
         fetch_comments: bool | None = None,
         restrict_to_post_ids: Iterable[str] | None = None,
         use_local_index: bool = False,
@@ -231,9 +228,6 @@ class WeiboCrawler(BrowserCrawler[WeiboCrawlerConfig, WeiboStore]):
                 await maybe_cooldown(sleep_step)
                 page_number += 1
 
-        if id_only:
-            return
-
         pending_posts = self.store.list_pending_posts(
             author_id,
             restrict_to_post_ids=restrict_set,
@@ -260,6 +254,30 @@ class WeiboCrawler(BrowserCrawler[WeiboCrawlerConfig, WeiboStore]):
 
     async def scrape_author_posts(self, author_id: str, **kwargs: Any) -> None:
         await self.by_author(author_id, **kwargs)
+
+    async def download_from_url(
+        self,
+        url: str,
+        *,
+        author_id: str = "unknown",
+        post_id: str | None = None,
+        fetch_comments: bool | None = None,
+        task_id: str | None = None,
+        page: Any | None = None,
+    ) -> None:
+        page = page or await self._new_page()
+        await self._ensure_logged_in(page)
+
+        resolved_post_id = post_id or self._post_id_from_url(url)
+        await self._scrape_one_post(
+            page,
+            resolved_post_id,
+            url,
+            author_id=author_id,
+            task_id=task_id,
+            fetch_comments=self.config.fetch_comments if fetch_comments is None else fetch_comments,
+            sleep_step=0,
+        )
 
     async def _get_keyword_total_pages(self, page: Any) -> int:
         value = await page.evaluate(
@@ -496,6 +514,13 @@ class WeiboCrawler(BrowserCrawler[WeiboCrawlerConfig, WeiboStore]):
         if page_number is not None:
             params["page"] = page_number
         return f"{WEIBO_SEARCH_URL}?{urlencode(params)}"
+
+    def _post_id_from_url(self, url: str) -> str:
+        path = urlparse(url).path.rstrip("/")
+        post_id = path.rsplit("/", 1)[-1]
+        if not post_id:
+            raise ValueError(f"Could not extract Weibo post id from URL: {url}")
+        return post_id
 
     async def _scrape_one_post(
         self,

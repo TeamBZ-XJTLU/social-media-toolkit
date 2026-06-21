@@ -20,9 +20,10 @@ from storage import DuckDBDatabase, JsonValue
 @dataclass(slots=True)
 class CliState:
     db: Path | None = None
+    media_dir: Path = Path("data/media")
+    download_media: bool = True
     user_data_dir: Path | None = None
     headless: bool = False
-    id_only: bool = False
     task_id: str | None = None
 
 
@@ -60,6 +61,7 @@ WEIBO_CONTENT_FILTER_PARAMS: dict[WeiboContentFilter, dict[str, str | int]] = {
     WeiboContentFilter.MUSIC: {"hasmusic": 1},
     WeiboContentFilter.LINK: {"haslink": 1},
 }
+MEDIA_DOWNLOAD_PLATFORMS = ("weibo", "rednote", "douyin")
 WEIBO_TIME_BOUND_RE = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})(?:-(?P<hour>\d{1,2}))?$")
 
 
@@ -114,6 +116,16 @@ def platform_db_path(state: CliState, platform: str) -> Path:
     if state.db is not None:
         return state.db
     return Path(f"data/{platform}.duckdb")
+
+
+def ensure_media_download_dirs(media_dir: Path) -> Path:
+    for platform in MEDIA_DOWNLOAD_PLATFORMS:
+        (media_dir / platform).mkdir(parents=True, exist_ok=True)
+    return media_dir
+
+
+def platform_media_download_dir(state: CliState, platform: str) -> Path:
+    return ensure_media_download_dirs(state.media_dir) / platform
 
 
 def save_task(
@@ -211,6 +223,8 @@ def parse_weibo_time_bound(value: str, param_hint: str) -> tuple[str, datetime]:
 def rednote_config(state: CliState, max_no_height_increase: int) -> RednoteCrawlerConfig:
     return RednoteCrawlerConfig(
         db_path=platform_db_path(state, "rednote"),
+        media_download_dir=platform_media_download_dir(state, "rednote"),
+        download_media=state.download_media,
         headless=state.headless,
         user_data_dir=state.user_data_dir or Path("data/rednote-browser-profile"),
         max_no_height_increase=max_no_height_increase,
@@ -227,6 +241,8 @@ def weibo_config(
 ) -> WeiboCrawlerConfig:
     return WeiboCrawlerConfig(
         db_path=platform_db_path(state, "weibo"),
+        media_download_dir=platform_media_download_dir(state, "weibo"),
+        download_media=state.download_media,
         headless=state.headless,
         user_data_dir=state.user_data_dir or Path("data/weibo-browser-profile"),
         max_empty_pages=max_empty_pages,
@@ -247,6 +263,8 @@ def douyin_config(
 ) -> DouyinCrawlerConfig:
     return DouyinCrawlerConfig(
         db_path=platform_db_path(state, "douyin"),
+        media_download_dir=platform_media_download_dir(state, "douyin"),
+        download_media=state.download_media,
         headless=state.headless,
         user_data_dir=state.user_data_dir or Path("data/douyin-browser-profile"),
         max_empty_pages=max_empty_pages,
@@ -264,6 +282,17 @@ def root(
         Path | None,
         typer.Option(help="Path to the DuckDB database file. Defaults to data/<platform>.duckdb."),
     ] = None,
+    media_dir: Annotated[
+        Path,
+        typer.Option(help="Root directory for downloaded media files. Platform subdirectories are created inside it."),
+    ] = Path("data/media"),
+    download_media: Annotated[
+        bool,
+        typer.Option(
+            "--download-media/--no-download-media",
+            help="Download media files referenced by crawled posts.",
+        ),
+    ] = True,
     user_data_dir: Annotated[
         Path | None,
         typer.Option(help="Browser profile directory used to persist login state."),
@@ -272,10 +301,6 @@ def root(
         bool,
         typer.Option("--headless", help="Run browser in headless mode. Not recommended for first login."),
     ] = False,
-    id_only: Annotated[
-        bool,
-        typer.Option("--id-only", help="Only collect IDs instead of opening items and saving full content."),
-    ] = False,
     task_id: Annotated[
         str | None,
         typer.Option(help="Optional label saved on crawled records."),
@@ -283,9 +308,10 @@ def root(
 ) -> None:
     ctx.obj = CliState(
         db=db,
+        media_dir=ensure_media_download_dirs(media_dir),
+        download_media=download_media,
         user_data_dir=user_data_dir,
         headless=headless,
-        id_only=id_only,
         task_id=task_id,
     )
 
@@ -329,7 +355,6 @@ def legacy_rednote_author(
         async with RednoteCrawler(rednote_config(state, max_no_height_increase)) as crawler:
             await crawler.by_author(
                 author_id,
-                id_only=state.id_only,
                 use_local_index=from_local,
                 task_id=task_id,
             )
@@ -367,9 +392,10 @@ def run_textual_ui(ctx: typer.Context) -> None:
     state = cli_state(ctx)
     run_ui(
         default_db=state.db,
+        default_media_dir=state.media_dir,
+        default_download_media=state.download_media,
         default_user_data_dir=state.user_data_dir,
         default_headless=state.headless,
-        default_id_only=state.id_only,
         default_task_id=state.task_id,
     )
 
@@ -410,7 +436,6 @@ def legacy_rednote_keyword(
         async with RednoteCrawler(rednote_config(state, max_no_height_increase)) as crawler:
             await crawler.by_keyword(
                 keyword,
-                id_only=state.id_only,
                 use_local_index=from_local,
                 task_id=task_id,
             )
@@ -513,7 +538,6 @@ def weibo_author(
         ) as crawler:
             await crawler.by_author(
                 author_id,
-                id_only=state.id_only,
                 fetch_comments=not no_comments,
                 use_local_index=from_local,
                 task_id=task_id,
@@ -609,7 +633,6 @@ def weibo_keyword(
         async with WeiboCrawler(weibo_config(state, max_empty_pages=3, max_pages=max_pages)) as crawler:
             await crawler.by_keyword(
                 keyword,
-                id_only=state.id_only,
                 max_pages=max_pages,
                 search_params=search_params,
                 task_id=task_id,
@@ -679,7 +702,6 @@ def douyin_author(
         ) as crawler:
             await crawler.by_author(
                 sec_user_id,
-                id_only=state.id_only,
                 collect_comments=not no_comments,
                 use_local_index=from_local,
                 task_id=task_id,

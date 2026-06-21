@@ -164,7 +164,6 @@ class WeiboStore:
         keyword: str,
         page_number: int,
         task_id: str | None = None,
-        id_only: bool = False,
     ) -> Record | None:
         post_id = value_to_str(post.get("mid")) or value_to_str(post.get("id")) or value_to_str(post.get("uid"))
         if post_id is None:
@@ -176,7 +175,7 @@ class WeiboStore:
 
         now = datetime.now(UTC).isoformat()
         url = value_to_str(post.get("url"))
-        content_html = None if id_only else value_to_str(post.get("content_html"))
+        content_html = value_to_str(post.get("content_html"))
         record: Record = {
             "id": post_id,
             "uid": post_id,
@@ -184,7 +183,7 @@ class WeiboStore:
             "html": content_html,
             "content_html": content_html,
             "updated_at": now,
-            "status": WeiboPostStatus.ID_ONLY.value if id_only else WeiboPostStatus.RETRIEVED.value,
+            "status": WeiboPostStatus.RETRIEVED.value,
             "author_id": author_id,
             "author_name": author_name,
             "task_id": task_id,
@@ -192,7 +191,7 @@ class WeiboStore:
             "source": "weibo_search",
             "search_keyword": keyword,
             "search_page": page_number,
-            "raw": minimal_search_post(post) if id_only else post,
+            "raw": post,
         }
 
         for key in (
@@ -212,7 +211,7 @@ class WeiboStore:
             "search_url",
             "search_params",
         ):
-            if key in post and not id_only:
+            if key in post:
                 record[key] = post[key]
 
         existing = self.db.read(POST_RAW_COLLECTION, post_id)
@@ -221,10 +220,6 @@ class WeiboStore:
 
         merged = existing.copy()
         merged.update(record)
-        if existing.get("content_html") and id_only:
-            merged["content_html"] = existing.get("content_html")
-            merged["html"] = existing.get("html")
-            merged["status"] = existing.get("status") or WeiboPostStatus.RETRIEVED.value
         return self.db.replace(POST_RAW_COLLECTION, post_id, merged)
 
     def save_comments(
@@ -333,31 +328,6 @@ def extract_author_profile(requested_author_id: str, user: dict[str, Any]) -> Re
         "raw": user,
         "updated_at": datetime.now(UTC).isoformat(),
     }
-
-
-def minimal_search_post(post: dict[str, Any]) -> Record:
-    return {
-        key: post.get(key)
-        for key in (
-            "id",
-            "uid",
-            "mid",
-            "url",
-            "author_id",
-            "author_name",
-            "author_url",
-            "published_at_text",
-            "source_app",
-            "search_keyword",
-            "search_page",
-            "search_position",
-            "search_total_pages",
-            "search_url",
-            "search_params",
-        )
-        if post.get(key) is not None
-    }
-
 
 def extract_post_meta(item: dict[str, Any], author_id: str) -> Record | None:
     uid = value_to_str(item.get("id")) or value_to_str(item.get("mblogid")) or value_to_str(item.get("mid"))
