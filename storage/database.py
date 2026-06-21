@@ -37,6 +37,22 @@ _COLLECTION_TABLES = {
 
 _PLATFORM_TABLES = sorted(set(_COLLECTION_TABLES.values()))
 
+_REDNOTE_POST_COLUMNS = {
+    "title": "TEXT",
+    "time": "BIGINT",
+    "lastUpdateTime": "BIGINT",
+    "noteId": "TEXT",
+    "ipLocation": "TEXT",
+    "followed": "BOOLEAN",
+    "relation": "TEXT",
+    "liked": "BOOLEAN",
+    "likedCount": "BIGINT",
+    "collected": "BOOLEAN",
+    "collectedCount": "BIGINT",
+    "commentCount": "BIGINT",
+    "shareCount": "BIGINT",
+}
+
 
 class DuckDBDatabase:
     """CRUD database persisted to DuckDB platform tables.
@@ -277,6 +293,12 @@ class DuckDBDatabase:
             self._migrate_legacy_records_table()
 
     def _create_platform_table(self, table: str) -> None:
+        extra_columns = ""
+        if table == "rednote_posts":
+            extra_columns = "".join(
+                f",\n                {self._quote_identifier(column)} {column_type}"
+                for column, column_type in _REDNOTE_POST_COLUMNS.items()
+            )
         self._conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {table} (
@@ -289,9 +311,16 @@ class DuckDBDatabase:
                 keyword TEXT,
                 status TEXT,
                 url TEXT
+                {extra_columns}
             )
             """
         )
+        if table == "rednote_posts":
+            for column, column_type in _REDNOTE_POST_COLUMNS.items():
+                self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS "
+                    f"{self._quote_identifier(column)} {column_type}"
+                )
         self._conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_task_idx ON {table}(task_id)")
         self._conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_author_idx ON {table}(author_id)")
         self._conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_post_idx ON {table}(post_id)")
@@ -333,44 +362,51 @@ class DuckDBDatabase:
             return
 
         indexed = self._indexed_values(collection, record)
+        extra_indexed = self._extra_indexed_values(table, record)
+        columns = ["id", "data", "updated_at", "task_id", "author_id", "post_id", "keyword", "status", "url"]
+        values: list[Any] = [
+            record_id,
+            payload,
+            updated_at,
+            indexed["task_id"],
+            indexed["author_id"],
+            indexed["post_id"],
+            indexed["keyword"],
+            indexed["status"],
+            indexed["url"],
+        ]
         if updated_at is None:
+            values[2] = None
+        for column, value in extra_indexed.items():
+            columns.append(column)
+            values.append(value)
+
+        columns_sql = ", ".join(self._quote_identifier(column) for column in columns)
+        if updated_at is None:
+            placeholders = ", ".join(
+                "current_timestamp" if column == "updated_at" else "?"
+                for column in columns
+            )
+            bind_values = [
+                value
+                for column, value in zip(columns, values, strict=True)
+                if column != "updated_at"
+            ]
             self._conn.execute(
                 f"""
-                INSERT INTO {table} (
-                    id, data, updated_at, task_id, author_id, post_id, keyword, status, url
-                )
-                VALUES (?, ?, current_timestamp, ?, ?, ?, ?, ?, ?)
+                INSERT INTO {table} ({columns_sql})
+                VALUES ({placeholders})
                 """,
-                [
-                    record_id,
-                    payload,
-                    indexed["task_id"],
-                    indexed["author_id"],
-                    indexed["post_id"],
-                    indexed["keyword"],
-                    indexed["status"],
-                    indexed["url"],
-                ],
+                bind_values,
             )
         else:
+            placeholders = ", ".join("?" for _ in columns)
             self._conn.execute(
                 f"""
-                INSERT INTO {table} (
-                    id, data, updated_at, task_id, author_id, post_id, keyword, status, url
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO {table} ({columns_sql})
+                VALUES ({placeholders})
                 """,
-                [
-                    record_id,
-                    payload,
-                    updated_at,
-                    indexed["task_id"],
-                    indexed["author_id"],
-                    indexed["post_id"],
-                    indexed["keyword"],
-                    indexed["status"],
-                    indexed["url"],
-                ],
+                values,
             )
 
     def _delete_existing(self, collection: str, record_id: str) -> None:
@@ -395,6 +431,48 @@ class DuckDBDatabase:
             "status": self._string_or_none(record.get("status")),
             "url": self._string_or_none(record.get("url")),
         }
+
+    def _extra_indexed_values(self, table: str, record: Mapping[str, JsonValue]) -> dict[str, Any]:
+        if table != "rednote_posts":
+            return {}
+        return {
+            column: self._extra_column_value(column, record.get(column))
+            for column in _REDNOTE_POST_COLUMNS
+        }
+
+    def _extra_column_value(self, column: str, value: Any) -> Any:
+        if value is None:
+            return None
+        column_type = _REDNOTE_POST_COLUMNS[column]
+        if column_type == "BIGINT":
+            if isinstance(value, bool):
+                return int(value)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                return int(value)
+            if isinstance(value, str):
+                normalized = value.strip().replace(",", "")
+                if not normalized:
+                    return None
+                try:
+                    return int(float(normalized))
+                except ValueError:
+                    return None
+            return None
+        if column_type == "BOOLEAN":
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, int | float):
+                return bool(value)
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                if normalized in {"true", "1", "yes", "y"}:
+                    return True
+                if normalized in {"false", "0", "no", "n"}:
+                    return False
+            return None
+        return self._string_or_none(value)
 
     def _author_id(self, collection: str, record: Mapping[str, JsonValue]) -> str | None:
         if collection.endswith("_authors"):
@@ -430,6 +508,9 @@ class DuckDBDatabase:
         if isinstance(value, int | float | bool):
             return str(value)
         return None
+
+    def _quote_identifier(self, identifier: str) -> str:
+        return '"' + identifier.replace('"', '""') + '"'
 
     def _table_exists(self, table: str) -> bool:
         row = self._conn.execute(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -11,6 +13,11 @@ from storage import DuckDBDatabase, DuplicateRecordError, Record
 AUTHOR_COLLECTION = "rednote_authors"
 POST_RAW_COLLECTION = "rednote_posts_raw"
 POST_METADATA_COLLECTION = "rednote_post_metadata"
+INITIAL_STATE_RE = re.compile(
+    r"window\.__INITIAL_STATE__\s*=\s*(\{.*?\})\s*;?\s*</script>",
+    re.DOTALL,
+)
+UNDEFINED_VALUE_RE = re.compile(r"(?<=[:\[,])\s*undefined\s*(?=[,\}\]])")
 
 
 class RednotePostStatus(StrEnum):
@@ -51,6 +58,7 @@ class RednoteStore:
         task_id: str | None = None,
         handler_id: int | None = None,
         extra: dict[str, Any] | None = None,
+        parsed: dict[str, Any] | None = None,
     ) -> Record:
         self.ensure_author(author_id)
 
@@ -67,6 +75,8 @@ class RednoteStore:
             "handler_id": handler_id,
             "task_id": task_id,
         }
+        if parsed:
+            record.update({key: value for key, value in parsed.items() if value is not None})
         if extra:
             record["extra"] = extra
 
@@ -252,6 +262,88 @@ def extract_search_note_metadata(
         "raw": item,
     }
     return {key: value for key, value in record.items() if value is not None}
+
+
+def extract_initial_state_from_html(html: str) -> dict[str, Any] | None:
+    match = INITIAL_STATE_RE.search(html)
+    if not match:
+        return None
+    state_text = UNDEFINED_VALUE_RE.sub(" null", match.group(1))
+    try:
+        state = json.loads(state_text)
+    except json.JSONDecodeError:
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def extract_post_detail_from_initial_state(
+    initial_state: dict[str, Any] | None,
+    *,
+    fallback_post_id: str | None = None,
+) -> Record:
+    if not isinstance(initial_state, dict):
+        return {}
+
+    note_store = initial_state.get("note") if isinstance(initial_state.get("note"), dict) else {}
+    note_detail_map = (
+        note_store.get("noteDetailMap")
+        if isinstance(note_store.get("noteDetailMap"), dict)
+        else {}
+    )
+    current_note_id = (
+        value_to_str(note_store.get("currentNoteId"))
+        or value_to_str(note_store.get("firstNoteId"))
+        or fallback_post_id
+    )
+    detail_entry = None
+    if current_note_id and isinstance(note_detail_map.get(current_note_id), dict):
+        detail_entry = note_detail_map[current_note_id]
+    elif note_detail_map:
+        first_entry = next(iter(note_detail_map.values()))
+        detail_entry = first_entry if isinstance(first_entry, dict) else None
+    if not isinstance(detail_entry, dict):
+        return {"initial_state": initial_state, "note_state": note_store}
+
+    note = detail_entry.get("note") if isinstance(detail_entry.get("note"), dict) else {}
+    comments = detail_entry.get("comments") if isinstance(detail_entry.get("comments"), dict) else None
+    user = note.get("user") if isinstance(note.get("user"), dict) else {}
+    interact_info = first_dict(note, "interactInfo", "interactionInfo", "iteractionInfo")
+
+    record: Record = {
+        "initial_state": initial_state,
+        "note_state": note_store,
+        "note_detail": note,
+        "comments": comments,
+        "title": value_to_str(note.get("title")),
+        "desc": value_to_str(note.get("desc")),
+        "time": value_to_int(note.get("time")),
+        "lastUpdateTime": value_to_int(note.get("lastUpdateTime")),
+        "noteId": value_to_str(note.get("noteId")) or current_note_id,
+        "ipLocation": value_to_str(note.get("ipLocation")),
+        "note_type": value_to_str(note.get("type")),
+        "xsecToken": value_to_str(note.get("xsecToken")),
+        "author_id": value_to_str(user.get("userId")),
+        "author_name": value_to_str(user.get("nickname")),
+        "author_avatar": value_to_str(user.get("avatar")),
+        "author_xsec_token": value_to_str(user.get("xsecToken")),
+        "imageList": note.get("imageList") if isinstance(note.get("imageList"), list) else None,
+        "tagList": note.get("tagList") if isinstance(note.get("tagList"), list) else None,
+        "atUserList": note.get("atUserList") if isinstance(note.get("atUserList"), list) else None,
+        "shareInfo": note.get("shareInfo") if isinstance(note.get("shareInfo"), dict) else None,
+        "illegalInfo": note.get("illegalInfo") if isinstance(note.get("illegalInfo"), dict) else None,
+        "interactInfo": interact_info,
+    }
+    for key, value in interact_info.items():
+        record[key] = value_to_int(value) if key.endswith("Count") else value
+    return {key: value for key, value in record.items() if value is not None}
+
+
+def first_dict(source: dict[str, Any], *keys: str) -> dict[str, Any]:
+    for key in keys:
+        value = source.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
 
 
 def search_note_url(note_id: str, xsec_token: str | None) -> str:

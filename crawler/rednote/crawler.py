@@ -10,7 +10,11 @@ from loguru import logger
 
 from crawler.base import BrowserCrawler, BrowserCrawlerConfig
 from storage import DuckDBDatabase
-from .storage import RednoteStore
+from .storage import (
+    RednoteStore,
+    extract_initial_state_from_html,
+    extract_post_detail_from_initial_state,
+)
 from .utils import (
     BASE_URL,
     USER_PROFILE_URL,
@@ -367,6 +371,27 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
                 await scroll_to_load_all_comments(post_page)
                 await expand_all_sub_comments(post_page)
 
+            initial_state = await post_page.evaluate(
+                """
+                () => {
+                    const state = window.__INITIAL_STATE__;
+                    if (!state) {
+                        return null;
+                    }
+                    return JSON.parse(JSON.stringify(state));
+                }
+                """
+            )
+            if not isinstance(initial_state, dict):
+                initial_state = extract_initial_state_from_html(await post_page.content())
+            parsed = extract_post_detail_from_initial_state(
+                initial_state,
+                fallback_post_id=post_id,
+            )
+            parsed_author_id = parsed.get("author_id")
+            if parsed_author_id:
+                author_id = str(parsed_author_id)
+
             html = await post_page.evaluate("document.querySelector('#noteContainer')?.innerHTML")
             if html:
                 self.store.save_post_raw(
@@ -375,6 +400,7 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
                     url=full_url,
                     html=str(html),
                     task_id=task_id,
+                    parsed=parsed,
                 )
                 logger.info("Captured post {} ({} bytes)", post_id, len(str(html)))
         finally:
