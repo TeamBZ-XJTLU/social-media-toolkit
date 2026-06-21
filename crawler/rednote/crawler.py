@@ -135,6 +135,7 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
             await self._collect_keyword_search_metadata(
                 page,
                 keyword=keyword,
+                scrape_details=not id_only,
                 task_id=task_id,
             )
             return
@@ -162,16 +163,20 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
         page: Any,
         *,
         keyword: str,
+        scrape_details: bool,
         task_id: str | None,
     ) -> None:
         loop = asyncio.get_running_loop()
+        response_lock = asyncio.Lock()
         pending_tasks: set[asyncio.Task[None]] = set()
+        processed_detail_post_ids: set[str] = set()
         last_request_at = loop.time()
         matching_response_count = 0
         saved_note_count = 0
+        detail_attempt_count = 0
 
         async def process_search_notes_response(response: Any) -> None:
-            nonlocal saved_note_count
+            nonlocal saved_note_count, detail_attempt_count
             try:
                 payload = await response.json()
             except Exception as exc:
@@ -180,16 +185,43 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
             if not isinstance(payload, dict):
                 return
 
-            saved_count = self.store.save_search_note_metadata_response(
-                payload,
-                keyword=keyword,
-                request_url=str(response.url),
-                task_id=task_id,
-            )
-            saved_note_count += saved_count
-            logger.info("Saved {} Rednote search note metadata records", saved_count)
-            # TODO: After one search/notes request is processed and saved,
-            # add detailed post processing here.
+            async with response_lock:
+                saved_records = self.store.save_search_note_metadata_records_from_response(
+                    payload,
+                    keyword=keyword,
+                    request_url=str(response.url),
+                    task_id=task_id,
+                )
+                saved_note_count += len(saved_records)
+                logger.info("Saved {} Rednote search note metadata records", len(saved_records))
+
+                if not scrape_details:
+                    return
+
+                for record in saved_records:
+                    post_id = str(record.get("post_id") or record.get("uid") or record.get("id") or "")
+                    post_url = str(record.get("url") or "")
+                    author_id = str(record.get("author_id") or "unknown")
+                    if not post_id or not post_url or post_id in processed_detail_post_ids:
+                        continue
+                    processed_detail_post_ids.add(post_id)
+                    self.store.save_post_raw(
+                        post_id,
+                        author_id,
+                        url=post_url,
+                        task_id=task_id,
+                    )
+                    if self.store.is_post_already_scraped(post_id):
+                        logger.info("Rednote post {} already has details, skipping", post_id)
+                        continue
+                    detail_attempt_count += 1
+                    await self._scrape_one_post(
+                        post_id,
+                        post_url,
+                        context=page.context,
+                        author_id=author_id,
+                        task_id=task_id,
+                    )
 
         def on_response(response: Any) -> None:
             nonlocal last_request_at, matching_response_count
@@ -230,10 +262,11 @@ class RednoteCrawler(BrowserCrawler[RednoteCrawlerConfig, RednoteStore]):
         if pending_tasks:
             await asyncio.gather(*pending_tasks, return_exceptions=True)
         logger.info(
-            "Rednote keyword search stopped: reason={}, responses={}, notes_saved={}",
+            "Rednote keyword search stopped: reason={}, responses={}, notes_saved={}, details_attempted={}",
             "end_container" if end_container_seen else f"{int(SEARCH_NOTES_IDLE_TIMEOUT_SECONDS)}s_idle",
             matching_response_count,
             saved_note_count,
+            detail_attempt_count,
         )
 
     def _is_search_notes_response(self, response: Any) -> bool:

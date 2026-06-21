@@ -132,20 +132,38 @@ class RednoteStore:
         request_url: str | None = None,
         task_id: str | None = None,
     ) -> int:
+        return len(
+            self.save_search_note_metadata_records_from_response(
+                payload,
+                keyword=keyword,
+                request_url=request_url,
+                task_id=task_id,
+            )
+        )
+
+    def save_search_note_metadata_records_from_response(
+        self,
+        payload: dict[str, Any],
+        *,
+        keyword: str,
+        request_url: str | None = None,
+        task_id: str | None = None,
+    ) -> list[Record]:
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         items = data.get("items") if isinstance(data.get("items"), list) else []
-        saved_count = 0
+        saved_records: list[Record] = []
         for item in items:
             if not isinstance(item, dict):
                 continue
-            if self.save_search_note_metadata(
+            record = self.save_search_note_metadata(
                 item,
                 keyword=keyword,
                 request_url=request_url,
                 task_id=task_id,
-            ):
-                saved_count += 1
-        return saved_count
+            )
+            if record:
+                saved_records.append(record)
+        return saved_records
 
     def is_post_already_scraped(self, post_id: str) -> bool:
         record = self.db.read(POST_RAW_COLLECTION, post_id)
